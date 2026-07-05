@@ -150,7 +150,9 @@ func (r *Repo) managedWorktrees() (map[string]string, error) {
 	for _, line := range strings.Split(out, "\n") {
 		switch {
 		case strings.HasPrefix(line, "worktree "):
-			current = strings.TrimPrefix(line, "worktree ")
+			// Clean normalizes git's forward-slash output to native
+			// separators, so Rm's WorktreePath lookup matches on Windows.
+			current = filepath.Clean(strings.TrimPrefix(line, "worktree "))
 		case strings.HasPrefix(line, "branch ") && current != "":
 			branch := strings.TrimPrefix(line, "branch refs/heads/")
 			if samePath(current, r.WorktreePath(branch)) {
