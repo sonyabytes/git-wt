@@ -69,6 +69,28 @@ share = [".env", ".env.*"]                         # symlinked: write-through to
 skip  = ["dist", "build", "out"]                   # not provisioned; rebuilt in the worktree
 ```
 
+## Real-world measurements
+
+Measured on macOS/APFS (Apple Silicon) by creating a fresh project per ecosystem, installing dependencies, then running `git wt new` against it. **Apparent size** is what `du` reports for the new worktree (CoW clones look like full copies); **physical cost** is the actual drop in volume free space (`df`), i.e. what a plain copy would have cost you but didn't. Physical numbers include the source checkout and setup-command writes, ±a few MB of measurement noise.
+
+| Ecosystem | Cloned state | `git wt new` time | Apparent size | Physical cost | Worktree verified by |
+|---|---|---:|---:|---:|---|
+| bun monorepo (real app) | `node_modules` 842 MB | 1.2 s | 1.1 GB | ~19 MB | `bun install` no-op (70 ms) |
+| npm 10.9 | `node_modules` 86 MB | 0.6 s | 87 MB | ~6 MB | `require()` + `.bin/tsc` run |
+| yarn 1.22 | `node_modules` 91 MB | 0.8 s | 91 MB | ~1 MB | `yarn install` → "Already up-to-date" |
+| cargo 1.93 (Rust) | `target` 138 MB | 0.05 s | 138 MB | ~1 MB | `cargo build` no-op rebuild in **0.12 s** |
+| go 1.26 (vendored) | `vendor` 41 MB | 0.09 s | 41 MB | ~0 MB | `go build ./...` |
+| bundler 4.0 (Ruby) | `vendor` + `.bundle` 45 MB | 0.1 s | 45 MB | ~3 MB | `bundle check` satisfied |
+| python 3.14 (venv) | `.venv` 126 MB | 0.13 s | 126 MB | ~1 MB | `import numpy, pandas`; `sys.prefix` points at worktree |
+
+Non-default ecosystems used a two-line `.worktree.toml` (`clone = ["target"]`, `clone = ["vendor"]`, `clone = [".venv"]`, …). A stock `git worktree add` on the same repos produced a 20–200 KB checkout with none of this state.
+
+Caveats found during testing:
+
+- **Python entry-point scripts** (`.venv/bin/pip` etc.) keep shebangs pointing at the *main checkout's* venv, so `pip install` run in a worktree mutates the main venv. Use `python -m pip` inside the worktree, or rebuild the venv. Direct `python` invocation and imports resolve correctly to the worktree.
+- **Monorepo workspaces**: `clone = ["node_modules"]` matches only the repo root; nested workspace dirs (`apps/*/node_modules`, `packages/*/node_modules`) need their own glob entries until nested matching lands. Cloned root state can also make the package manager's install report "no changes" without materializing the nested dirs.
+- **Setup failure leaves the worktree in place**: if the setup command fails (e.g. auto-detected `yarn install` with no yarn on PATH), `git wt new` exits non-zero but the provisioned worktree and branch survive — fix the setup (e.g. `setup = "npx -y yarn@1.22 install"`) and re-run it manually, or `git wt rm` and retry.
+
 ## Notes
 
 - macOS/APFS-first. On filesystems without CoW cloning, `clone` degrades to a plain copy (correct, just slower). Linux reflink support is a planned drop-in.
