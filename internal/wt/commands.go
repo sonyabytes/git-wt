@@ -10,19 +10,19 @@ import (
 	"github.com/sonyabytes/git-wt/internal/config"
 )
 
-// New creates a worktree for branch under the sibling convention, provisions
+// New creates a worktree for branch under the configured placement, provisions
 // cloned/shared state, and runs the setup command. Returns the worktree path.
 // The branch is created (from HEAD of the main checkout) if it doesn't exist.
 func (r *Repo) New(branch string, logf func(string, ...any)) (string, error) {
-	cfg, err := config.Load(r.MainRoot)
-	if err != nil {
-		return "", err
-	}
+	cfg := r.Cfg
 	path := r.WorktreePath(branch)
 	if _, err := os.Stat(path); err == nil {
 		return "", fmt.Errorf("worktree already exists: %s", path)
 	}
-	if err := os.MkdirAll(r.WorktreesDir(), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return "", err
+	}
+	if err := r.ensureExcluded(path); err != nil {
 		return "", err
 	}
 
@@ -156,26 +156,49 @@ func (r *Repo) checkSafeToRemove(wtPath, branch string) error {
 
 // DefaultConfigTOML is written by Init when no .worktree.toml exists. It
 // restates the built-in defaults so teams have something concrete to edit.
-const DefaultConfigTOML = `# git-wt provisioning classification (first match wins; these precede built-in defaults)
+func DefaultConfigTOML(placement string) string {
+	if placement == "" {
+		placement = "sibling"
+	}
+	return `# git-wt provisioning classification (first match wins; these precede built-in defaults)
 # setup = "bun install"   # command run in every new worktree; default: auto-detect from lockfile
+
+# worktrees: where git wt new places worktrees.
+#   "sibling" (default)  ../<repo>.worktrees/<branch>
+#   "inside"             .worktrees/<branch> inside the repo (auto-added to .git/info/exclude)
+#   "home"               ~/.worktrees/<repo>/<branch>
+#   or a path template with {repo} and {branch}, e.g. "~/wt/{repo}/{branch}"
+worktrees = ` + fmt.Sprintf("%q", placement) + `
 
 clone = ["node_modules", ".turbo", ".next/cache"]  # CoW-cloned: private to the worktree
 share = [".env", ".env.*"]                         # symlinked: write-through to main checkout
 skip  = ["dist", "build", "out"]                   # not provisioned; rebuilt in the worktree
 `
+}
 
 const claudeMdLine = "\n## Worktrees\nCreate worktrees with `git wt new <branch>` (never raw `git worktree add`); remove with `git wt rm <branch>`. Worktrees are pre-provisioned with node_modules and .env — no install needed.\n"
 
-// Init scaffolds .worktree.toml and appends usage guidance to CLAUDE.md.
-// Existing files are respected: the config is not overwritten, and the
-// CLAUDE.md line is not duplicated.
-func (r *Repo) Init(logf func(string, ...any)) error {
+// Init scaffolds .worktree.toml (with the chosen worktree placement) and
+// appends usage guidance to CLAUDE.md. Existing files are respected: the
+// config is not overwritten, and the CLAUDE.md line is not duplicated.
+func (r *Repo) Init(placement string, logf func(string, ...any)) error {
+	home, _ := os.UserHomeDir()
+	tmpl, err := resolvePlacement(placement, r.Name, r.MainRoot, home)
+	if err != nil {
+		return err
+	}
 	cfgPath := filepath.Join(r.MainRoot, config.FileName)
 	if _, err := os.Stat(cfgPath); os.IsNotExist(err) {
-		if err := os.WriteFile(cfgPath, []byte(DefaultConfigTOML), 0o644); err != nil {
+		if err := os.WriteFile(cfgPath, []byte(DefaultConfigTOML(placement)), 0o644); err != nil {
 			return err
 		}
 		logf("wrote %s", config.FileName)
+		// For in-repo placements, exclude the container now so git status
+		// stays clean from the first worktree on.
+		static := filepath.Clean(strings.ReplaceAll(tmpl, "{branch}", "x"))
+		if err := r.ensureExcluded(static); err != nil {
+			return err
+		}
 	} else {
 		logf("%s already exists, leaving it alone", config.FileName)
 	}

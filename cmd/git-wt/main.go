@@ -4,10 +4,14 @@
 package main
 
 import (
+	"bufio"
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 
+	"github.com/sonyabytes/git-wt/internal/config"
 	"github.com/sonyabytes/git-wt/internal/wt"
 )
 
@@ -18,7 +22,10 @@ commands:
   ls                           list managed worktrees (path<TAB>branch)
   rm <branch> [--force]        remove a worktree; refuses on unsaved/unpushed work
   prune                        remove worktrees whose branches are merged or deleted
-  init [--hook]                scaffold .worktree.toml + CLAUDE.md line; --hook also
+  init [--hook] [--placement=<value>]
+                               scaffold .worktree.toml + CLAUDE.md line; prompts for
+                               worktree placement (sibling|inside|home|<template>) unless
+                               --placement is given or stdin is not a terminal; --hook also
                                installs a Claude Code guard against raw 'git worktree add'
 `
 
@@ -101,8 +108,14 @@ func main() {
 	case "init":
 		fs := flag.NewFlagSet("init", flag.ExitOnError)
 		hook := fs.Bool("hook", false, "install Claude Code PreToolUse guard hook")
+		placement := fs.String("placement", "", "worktree placement: sibling|inside|home|<template> (use --placement=<value>)")
 		fs.Parse(rest())
-		if err := repo.Init(logf); err != nil {
+		// Only prompt when the answer will be used: config not yet scaffolded
+		// and someone is at the terminal.
+		if _, err := os.Stat(filepath.Join(repo.MainRoot, config.FileName)); *placement == "" && os.IsNotExist(err) && stdinIsTTY() {
+			*placement = promptPlacement()
+		}
+		if err := repo.Init(*placement, logf); err != nil {
 			fatal(err)
 		}
 		if *hook {
@@ -125,6 +138,37 @@ func rest() []string {
 		}
 	}
 	return append(flags, positional...)
+}
+
+func stdinIsTTY() bool {
+	fi, err := os.Stdin.Stat()
+	return err == nil && fi.Mode()&os.ModeCharDevice != 0
+}
+
+// promptPlacement asks (on stderr, keeping stdout clean) where worktrees
+// should live. Empty input or a read error falls back to the sibling default;
+// invalid custom templates are caught by Init's validation.
+func promptPlacement() string {
+	fmt.Fprint(os.Stderr, `Where should git wt put worktrees?
+  1) sibling   ../<repo>.worktrees/<branch>   [default]
+  2) inside    .worktrees/<branch> inside the repo (auto-ignored)
+  3) home      ~/.worktrees/<repo>/<branch>
+Note: placements on a different volume than the repo lose copy-on-write provisioning.
+Enter 1-3, or a custom path template with {repo}/{branch}: `)
+	line, err := bufio.NewReader(os.Stdin).ReadString('\n')
+	if err != nil && line == "" {
+		return "sibling"
+	}
+	switch ans := strings.TrimSpace(line); ans {
+	case "", "1":
+		return "sibling"
+	case "2":
+		return "inside"
+	case "3":
+		return "home"
+	default:
+		return ans
+	}
 }
 
 func fatal(err error) {

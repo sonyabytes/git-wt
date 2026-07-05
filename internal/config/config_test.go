@@ -54,3 +54,25 @@ skip  = ["node_modules"]
 		t.Errorf("defaults should still apply: .env = %v, %v", got, ok)
 	}
 }
+
+func TestWorktreesKey(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, FileName), []byte(`worktrees = "inside"`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Worktrees != "inside" {
+		t.Errorf("Worktrees = %q, want %q", cfg.Worktrees, "inside")
+	}
+
+	cfg, err = Load(t.TempDir()) // no file
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Worktrees != "" {
+		t.Errorf("Worktrees with no file = %q, want empty", cfg.Worktrees)
+	}
+}

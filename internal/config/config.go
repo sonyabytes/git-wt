@@ -39,6 +39,10 @@ type Config struct {
 	// Setup is the command run (via sh -c, in the new worktree) after
 	// provisioning. Empty means auto-detect a package-manager install.
 	Setup string
+	// Worktrees is the raw placement value: a preset name ("sibling",
+	// "inside", "home") or a path template with {repo}/{branch}
+	// placeholders. Empty means sibling. Resolution lives in the wt package.
+	Worktrees string
 }
 
 // FileName is the repo-root config file read by Load.
@@ -58,11 +62,12 @@ var Defaults = []Rule{
 }
 
 type tomlFile struct {
-	Setup string            `toml:"setup"`
-	Clone []string          `toml:"clone"`
-	Share []string          `toml:"share"`
-	Skip  []string          `toml:"skip"`
-	Paths map[string]string `toml:"paths"` // legacy/explicit form: pattern -> action
+	Setup     string            `toml:"setup"`
+	Worktrees string            `toml:"worktrees"`
+	Clone     []string          `toml:"clone"`
+	Share     []string          `toml:"share"`
+	Skip      []string          `toml:"skip"`
+	Paths     map[string]string `toml:"paths"` // legacy/explicit form: pattern -> action
 }
 
 // Load reads repoRoot/.worktree.toml if present and layers it over Defaults.
@@ -84,6 +89,7 @@ func Load(repoRoot string) (*Config, error) {
 		return nil, err
 	}
 	cfg.Setup = f.Setup
+	cfg.Worktrees = f.Worktrees
 	for _, p := range f.Clone {
 		cfg.Rules = append(cfg.Rules, Rule{Pattern: p, Action: Clone})
 	}
