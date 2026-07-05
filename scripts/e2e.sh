@@ -95,12 +95,53 @@ assert "prune keeps unmerged-branch worktree" '[ -d "$WT5" ]'
 git wt rm feature/wip --force
 
 echo "== init =="
-git wt init --hook 2>/dev/null
+git wt init --hook </dev/null 2>/dev/null
 assert "init leaves existing .worktree.toml alone" 'grep -q setup-ran .worktree.toml'
 assert "init appends CLAUDE.md guidance" 'grep -q "git wt new" CLAUDE.md'
 assert "init --hook writes settings.json with guard" 'grep -q "git wt new" .claude/settings.json'
-git wt init --hook 2>/dev/null
+git wt init --hook </dev/null 2>/dev/null
 assert "init is idempotent (no duplicate hook)" '[ "$(grep -c "worktree" .claude/settings.json)" -le 2 ]'
+
+echo "== placement: inside =="
+REPO2="$SCRATCH/insideapp"
+mkdir -p "$REPO2" && cd "$REPO2"
+git init -q -b main
+git config user.email t@t && git config user.name t
+echo 'src' > main.go
+git add -A && git commit -qm init
+git wt init --placement=inside </dev/null 2>/dev/null
+assert "init writes chosen placement" 'grep -q "worktrees = \"inside\"" .worktree.toml'
+git add -A && git commit -qm "add worktree config"
+WT_IN=$(git wt new feature/x --porcelain)
+assert "worktree lands inside the repo" '[ "$WT_IN" = "$REPO2/.worktrees/feature-x" ]'
+assert "container is git-ignored (clean status)" '[ -z "$(git status --porcelain)" ]'
+assert "ls sees inside worktree" 'git wt ls | grep -q "feature-x	feature/x"'
+git wt rm feature/x
+assert "rm removes inside worktree" '[ ! -d "$WT_IN" ]'
+
+echo "== placement: custom template =="
+REPO3="$SCRATCH/customapp"
+mkdir -p "$REPO3" && cd "$REPO3"
+git init -q -b main
+git config user.email t@t && git config user.name t
+echo 'src' > main.go
+printf 'worktrees = "%s/wt/{repo}/{branch}"\n' "$SCRATCH" > .worktree.toml
+git add -A && git commit -qm init
+WT_TPL=$(git wt new feature/y --porcelain)
+assert "custom template renders repo and branch" '[ "$WT_TPL" = "$SCRATCH/wt/customapp/feature-y" ]'
+assert "ls sees template worktree" 'git wt ls | grep -q "feature-y	feature/y"'
+git wt rm feature/y
+assert "rm removes template worktree" '[ ! -d "$WT_TPL" ]'
+
+echo "== placement: rejected values =="
+REPO4="$SCRATCH/badapp"
+mkdir -p "$REPO4" && cd "$REPO4"
+git init -q -b main
+git config user.email t@t && git config user.name t
+echo 'src' > main.go && git add -A && git commit -qm init
+assert "init rejects placement inside .git" '! git wt init --placement=".git/wt" </dev/null 2>/dev/null'
+printf 'worktrees = "."\n' > .worktree.toml
+assert "commands fail fast on placement = main checkout" '! git wt ls 2>/dev/null'
 
 echo
 echo "passed $PASS, failed $FAIL"

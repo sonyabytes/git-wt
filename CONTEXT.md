@@ -6,9 +6,11 @@
 
 **Main Checkout** — the original clone of the repository (the worktree that owns `.git` as a directory). All provisioning sources come from here.
 
-**Worktree** — a linked `git worktree` created by `git wt new`, always placed by the Sibling Convention.
+**Worktree** — a linked `git worktree` created by `git wt new`, always placed by the repo's Placement.
 
-**Sibling Convention** — worktrees live in `../<repo>.worktrees/<branch-sanitized>` next to the Main Checkout. Slashes in branch names become dashes (`feature/auth` → `feature-auth`).
+**Placement** — where worktrees live, set by the `worktrees` key in `.worktree.toml`: a preset (`sibling`, `inside`, `home`) or a path template with `{repo}`/`{branch}`. The default is the Sibling Convention. Slashes in branch names become dashes (`feature/auth` → `feature-auth`).
+
+**Sibling Convention** — the default Placement: worktrees live in `../<repo>.worktrees/<branch-sanitized>` next to the Main Checkout.
 
 **Cloned State** — mutable, per-worktree ignored files (e.g. `node_modules`, `.turbo`) copied from the Main Checkout via filesystem copy-on-write (APFS `clonefile`). The clone costs ~zero disk/time; a file becomes a real independent copy only when written. Writes in a worktree never affect the Main Checkout.
 
@@ -23,3 +25,7 @@
 ## Decisions
 
 Cloned State uses CoW clones rather than symlinks or hardlinks: symlinks would let a worktree's writes leak back into the Main Checkout, and hardlinks share content the moment either side edits in place. CoW clones keep writes private to each worktree at near-zero disk/time cost on APFS.
+
+A worktree is *managed* when its path round-trips through the Placement template (`WorktreePath(branch) == path`), not by directory-prefix matching — templates like `~/wt/{repo}-{branch}` have no clean container directory. Consequence: changing `worktrees` orphans previously created worktrees from `ls`/`rm`/`prune`; they remain plain git worktrees.
+
+The `inside` Placement ignores its container via `.git/info/exclude` (written lazily by `new`, eagerly by `init`) rather than a committed `.gitignore` change: per-clone, nothing to commit, and teammates' clones get it automatically the first time they run `git wt new`.

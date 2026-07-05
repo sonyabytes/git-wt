@@ -1,6 +1,6 @@
 # git-wt
 
-Agent-friendly git worktrees. `git wt new <branch>` creates a worktree that is **ready to work in** — `node_modules` arrives via copy-on-write clone (near-zero time and disk on APFS), `.env` is symlinked, the setup command has already run — and it lands in one predictable place: `../<repo>.worktrees/<branch>`.
+Agent-friendly git worktrees. `git wt new <branch>` creates a worktree that is **ready to work in** — `node_modules` arrives via copy-on-write clone (near-zero time and disk on APFS), `.env` is symlinked, the setup command has already run — and it lands in one predictable, [configurable](#configuration--worktreetoml) place (default: `../<repo>.worktrees/<branch>`).
 
 ## Why
 
@@ -34,11 +34,30 @@ git wt new feature/auth --porcelain   # path only on stdout, for scripts/agents
 git wt ls                     # managed worktrees: path<TAB>branch
 git wt rm feature/auth        # refuses on uncommitted/unpushed work; --force overrides; never deletes the branch
 git wt prune                  # remove clean worktrees whose branches are merged into HEAD
-git wt init                   # scaffold .worktree.toml + append agent guidance to CLAUDE.md
+git wt init                   # scaffold .worktree.toml + append agent guidance to CLAUDE.md;
+                              # prompts for worktree placement when run at a terminal
+git wt init --placement=inside   # skip the prompt (sibling|inside|home|<template>)
 git wt init --hook            # …plus a Claude Code hook blocking raw 'git worktree add'
 ```
 
 ## Configuration — `.worktree.toml`
+
+### Placement — where worktrees live
+
+```toml
+worktrees = "sibling"   # preset name or path template
+```
+
+| Value | Worktree path |
+|---|---|
+| `"sibling"` (default) | `../<repo>.worktrees/<branch>` next to the main checkout |
+| `"inside"` | `.worktrees/<branch>` inside the repo (auto-added to `.git/info/exclude`) |
+| `"home"` | `~/.worktrees/<repo>/<branch>` |
+| custom template | e.g. `"~/wt/{repo}/{branch}"` — `{repo}`/`{branch}` substituted, `~` expanded, relative paths resolve against the main checkout; `{branch}` is appended if missing |
+
+`git wt init` asks which placement to use (or take `--placement=<value>`). Worktrees created under a previous placement stay valid git worktrees but drop out of `ls`/`rm`/`prune` management. Placements on a different volume than the repo lose APFS copy-on-write: provisioning falls back to a full copy.
+
+### Provisioning classification
 
 First match wins; repo rules precede built-in defaults.
 
