@@ -1,0 +1,37 @@
+version: 2
+
+project_name: git-wt
+
+builds:
+  - main: ./cmd/git-wt
+    binary: git-wt
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+
+archives:
+  - formats: [tar.gz]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  use: github-native
+
+release:
+  footer: |
+    ## Install
+
+    ```sh
+    go install github.com/sonyabytes/git-wt/cmd/git-wt@{{ .Tag }}
+    ```
+
+    Or download the archive for your platform above and put `git-wt` on your PATH — git then exposes it as `git wt`.
