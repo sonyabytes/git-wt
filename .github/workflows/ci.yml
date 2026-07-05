@@ -29,17 +29,37 @@ jobs:
       - name: vet
         run: go vet ./...
       - name: unit tests
-        run: go test ./... -coverprofile=cover.out -covermode=atomic -coverpkg=./...
-      - name: enforce 100% coverage
-        # Several error-path tests need Unix permission semantics (chmod) and
-        # are skipped on Windows, so the gate runs on the Unix legs only.
-        # Invoked via `go run` because the go-test-coverage GitHub Action is
-        # a container action and only works on Linux runners.
-        if: runner.os != 'Windows'
-        run: go run github.com/vladopajic/go-test-coverage/v2@v2.18.8 --config=.testcoverage.yml
+        run: go test ./...
       - name: build
         run: go build ./...
       - name: end-to-end
         # The e2e script needs Unix tooling (df, readlink, symlinks).
         if: runner.os != 'Windows'
         run: bash scripts/e2e.sh
+
+  coverage:
+    name: coverage (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        # Both Unix legs: cow_darwin.go is only compiled (and therefore only
+        # enforceable) on macOS, cow_other.go on Linux. Windows is excluded —
+        # the permission-bit and sh-based error-path tests are Unix-only, so
+        # a Windows gate could never reach 100%.
+        include:
+          - name: macOS
+            os: macos-latest
+          - name: Linux
+            os: ubuntu-latest
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: test with coverage profile
+        run: go test ./... -coverprofile=cover.out -covermode=atomic -coverpkg=./...
+      - name: enforce 100% coverage
+        # Invoked via `go run` because the go-test-coverage GitHub Action is
+        # a container action and only works on Linux runners.
+        run: go run github.com/vladopajic/go-test-coverage/v2@v2.18.8 --config=.testcoverage.yml
