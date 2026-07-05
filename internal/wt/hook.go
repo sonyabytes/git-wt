@@ -49,8 +49,9 @@ func (r *Repo) InstallHook(logf func(string, ...any)) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
+	// Unreachable: settings came from json.Unmarshal, so it marshals.
 	data, err := json.MarshalIndent(settings, "", "  ")
-	if err != nil {
+	if err != nil { // coverage-ignore
 		return err
 	}
 	if err := os.WriteFile(path, append(data, '\n'), 0o644); err != nil {

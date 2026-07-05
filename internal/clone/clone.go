@@ -9,6 +9,10 @@ import (
 	"path/filepath"
 )
 
+// doCoW is a seam over the platform cowClone so tests can force either the
+// CoW path or the plain-copy fallback regardless of the host filesystem.
+var doCoW = cowClone
+
 // Tree clones src to dst. dst must not exist. On APFS the whole tree is
 // cloned in one clonefile call; otherwise the tree is walked and copied.
 func Tree(src, dst string) error {
@@ -18,7 +22,7 @@ func Tree(src, dst string) error {
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 		return err
 	}
-	if err := cowClone(src, dst); err == nil {
+	if err := doCoW(src, dst); err == nil {
 		return nil
 	}
 	return copyTree(src, dst)
@@ -29,8 +33,9 @@ func copyTree(src, dst string) error {
 		if err != nil {
 			return err
 		}
+		// Unreachable: the walk only yields paths under src.
 		rel, err := filepath.Rel(src, path)
-		if err != nil {
+		if err != nil { // coverage-ignore
 			return err
 		}
 		target := filepath.Join(dst, rel)
@@ -38,8 +43,9 @@ func copyTree(src, dst string) error {
 		case info.IsDir():
 			return os.MkdirAll(target, info.Mode().Perm())
 		case info.Mode()&os.ModeSymlink != 0:
+			// Unreachable short of a race: Lstat just reported a symlink.
 			link, err := os.Readlink(path)
-			if err != nil {
+			if err != nil { // coverage-ignore
 				return err
 			}
 			return os.Symlink(link, target)

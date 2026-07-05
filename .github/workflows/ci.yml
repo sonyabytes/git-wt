@@ -29,7 +29,14 @@ jobs:
       - name: vet
         run: go vet ./...
       - name: unit tests
-        run: go test ./...
+        run: go test ./... -coverprofile=cover.out -covermode=atomic -coverpkg=./...
+      - name: enforce 100% coverage
+        # Several error-path tests need Unix permission semantics (chmod) and
+        # are skipped on Windows, so the gate runs on the Unix legs only.
+        if: runner.os != 'Windows'
+        uses: vladopajic/go-test-coverage@v2
+        with:
+          config: ./.testcoverage.yml
       - name: build
         run: go build ./...
       - name: end-to-end

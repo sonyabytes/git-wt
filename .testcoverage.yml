@@ -1,0 +1,14 @@
+# Enforced by vladopajic/go-test-coverage in CI (see .github/workflows/ci.yml).
+# Run locally with:
+#   go test ./... -coverprofile=cover.out -covermode=atomic -coverpkg=./...
+#   go run github.com/vladopajic/go-test-coverage/v2@latest --config=.testcoverage.yml
+#
+# Every line must be covered. Statements that cannot fail in practice (and so
+# cannot be exercised) carry an explicit `// coverage-ignore` annotation with
+# a justification comment at the ignore site.
+profile: cover.out
+
+threshold:
+  file: 100
+  package: 100
+  total: 100

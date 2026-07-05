@@ -7,6 +7,7 @@ import (
 	"bufio"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -29,43 +30,57 @@ commands:
                                installs a Claude Code guard against raw 'git worktree add'
 `
 
-func main() {
-	if len(os.Args) < 2 {
-		fmt.Fprint(os.Stderr, usage)
-		os.Exit(2)
+func main() { // coverage-ignore
+	os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr, stdinIsTTY()))
+}
+
+// run is the whole CLI behind an exit code, with the process globals (args,
+// streams, terminal-ness) injected so tests can drive every path.
+func run(args []string, stdin io.Reader, stdout, stderr io.Writer, tty bool) int {
+	if len(args) < 1 {
+		fmt.Fprint(stderr, usage)
+		return 2
 	}
 
 	logf := func(format string, a ...any) {
-		fmt.Fprintf(os.Stderr, "git-wt: "+format+"\n", a...)
+		fmt.Fprintf(stderr, "git-wt: "+format+"\n", a...)
+	}
+	fail := func(err error) int {
+		fmt.Fprintf(stderr, "git-wt: %v\n", err)
+		return 1
 	}
 
 	// Help and unknown commands must work outside a git repository.
-	switch os.Args[1] {
+	switch args[0] {
 	case "-h", "--help", "help":
-		fmt.Print(usage)
-		return
+		fmt.Fprint(stdout, usage)
+		return 0
 	case "new", "ls", "rm", "prune", "init":
 	default:
-		fmt.Fprintf(os.Stderr, "git-wt: unknown command %q\n\n%s", os.Args[1], usage)
-		os.Exit(2)
+		fmt.Fprintf(stderr, "git-wt: unknown command %q\n\n%s", args[0], usage)
+		return 2
 	}
 
+	// Unreachable in tests: the working directory always exists there.
 	cwd, err := os.Getwd()
-	if err != nil {
-		fatal(err)
+	if err != nil { // coverage-ignore
+		return fail(err)
 	}
 	repo, err := wt.Discover(cwd)
 	if err != nil {
-		fatal(err)
+		return fail(err)
 	}
 
-	switch cmd := os.Args[1]; cmd {
+	switch cmd := args[0]; cmd {
 	case "new":
-		fs := flag.NewFlagSet("new", flag.ExitOnError)
+		fs := flag.NewFlagSet("new", flag.ContinueOnError)
+		fs.SetOutput(stderr)
 		porcelain := fs.Bool("porcelain", false, "print only the worktree path on stdout")
-		fs.Parse(rest())
+		if err := fs.Parse(rest(args)); err != nil {
+			return 2
+		}
 		if fs.NArg() != 1 {
-			fatal(fmt.Errorf("usage: git wt new <branch>"))
+			return fail(fmt.Errorf("usage: git wt new <branch>"))
 		}
 		quiet := logf
 		if *porcelain {
@@ -73,64 +88,72 @@ func main() {
 		}
 		path, err := repo.New(fs.Arg(0), quiet)
 		if err != nil {
-			fatal(err)
+			return fail(err)
 		}
-		fmt.Println(path)
+		fmt.Fprintln(stdout, path)
 
 	case "ls":
 		lines, err := repo.Ls()
-		if err != nil {
-			fatal(err)
+		// Unreachable in practice: Discover just succeeded on this repo.
+		if err != nil { // coverage-ignore
+			return fail(err)
 		}
 		for _, l := range lines {
-			fmt.Println(l)
+			fmt.Fprintln(stdout, l)
 		}
 
 	case "rm":
-		fs := flag.NewFlagSet("rm", flag.ExitOnError)
+		fs := flag.NewFlagSet("rm", flag.ContinueOnError)
+		fs.SetOutput(stderr)
 		force := fs.Bool("force", false, "remove even with uncommitted or unpushed work")
-		fs.Parse(rest())
+		if err := fs.Parse(rest(args)); err != nil {
+			return 2
+		}
 		if fs.NArg() != 1 {
-			fatal(fmt.Errorf("usage: git wt rm <branch>"))
+			return fail(fmt.Errorf("usage: git wt rm <branch>"))
 		}
 		if err := repo.Rm(fs.Arg(0), *force); err != nil {
-			fatal(err)
+			return fail(err)
 		}
 		logf("removed worktree for %s", fs.Arg(0))
 
 	case "prune":
 		removed, err := repo.Prune(logf)
 		if err != nil {
-			fatal(err)
+			return fail(err)
 		}
 		logf("pruned %d worktree(s)", len(removed))
 
 	case "init":
-		fs := flag.NewFlagSet("init", flag.ExitOnError)
+		fs := flag.NewFlagSet("init", flag.ContinueOnError)
+		fs.SetOutput(stderr)
 		hook := fs.Bool("hook", false, "install Claude Code PreToolUse guard hook")
 		placement := fs.String("placement", "", "worktree placement: sibling|inside|home|<template> (use --placement=<value>)")
-		fs.Parse(rest())
+		if err := fs.Parse(rest(args)); err != nil {
+			return 2
+		}
 		// Only prompt when the answer will be used: config not yet scaffolded
 		// and someone is at the terminal.
-		if _, err := os.Stat(filepath.Join(repo.MainRoot, config.FileName)); *placement == "" && os.IsNotExist(err) && stdinIsTTY() {
-			*placement = promptPlacement()
+		if _, err := os.Stat(filepath.Join(repo.MainRoot, config.FileName)); *placement == "" && os.IsNotExist(err) && tty {
+			*placement = promptPlacement(stdin, stderr)
 		}
 		if err := repo.Init(*placement, logf); err != nil {
-			fatal(err)
+			return fail(err)
 		}
 		if *hook {
 			if err := repo.InstallHook(logf); err != nil {
-				fatal(err)
+				return fail(err)
 			}
 		}
 	}
+	return 0
 }
 
 // rest returns the args after the subcommand, flags first — the flag pkg
 // stops at the first positional, and `git wt rm mybranch --force` should work.
-func rest() []string {
+func rest(args []string) []string {
 	var flags, positional []string
-	for _, a := range os.Args[2:] {
+	for _, a := range args[1:] {
 		if len(a) > 1 && a[0] == '-' {
 			flags = append(flags, a)
 		} else {
@@ -148,14 +171,14 @@ func stdinIsTTY() bool {
 // promptPlacement asks (on stderr, keeping stdout clean) where worktrees
 // should live. Empty input or a read error falls back to the sibling default;
 // invalid custom templates are caught by Init's validation.
-func promptPlacement() string {
-	fmt.Fprint(os.Stderr, `Where should git wt put worktrees?
+func promptPlacement(stdin io.Reader, stderr io.Writer) string {
+	fmt.Fprint(stderr, `Where should git wt put worktrees?
   1) sibling   ../<repo>.worktrees/<branch>   [default]
   2) inside    .worktrees/<branch> inside the repo (auto-ignored)
   3) home      ~/.worktrees/<repo>/<branch>
 Note: placements on a different volume than the repo lose copy-on-write provisioning.
 Enter 1-3, or a custom path template with {repo}/{branch}: `)
-	line, err := bufio.NewReader(os.Stdin).ReadString('\n')
+	line, err := bufio.NewReader(stdin).ReadString('\n')
 	if err != nil && line == "" {
 		return "sibling"
 	}
@@ -169,9 +192,4 @@ Enter 1-3, or a custom path template with {repo}/{branch}: `)
 	default:
 		return ans
 	}
-}
-
-func fatal(err error) {
-	fmt.Fprintf(os.Stderr, "git-wt: %v\n", err)
-	os.Exit(1)
 }
