@@ -22,4 +22,4 @@
 
 ## Decisions
 
-See `docs/adr/` — notably [0001](docs/adr/0001-cow-clones-over-symlinks-for-mutable-state.md) for why Cloned State uses CoW clones rather than symlinks or hardlinks.
+Cloned State uses CoW clones rather than symlinks or hardlinks: symlinks would let a worktree's writes leak back into the Main Checkout, and hardlinks share content the moment either side edits in place. CoW clones keep writes private to each worktree at near-zero disk/time cost on APFS.

@@ -23,6 +23,30 @@ archives:
 checksum:
   name_template: checksums.txt
 
+brews:
+  - name: git-wt
+    repository:
+      owner: sonyabytes
+      name: homebrew-tap
+      token: "{{ .Env.TAP_GITHUB_TOKEN }}"
+    directory: Formula
+    homepage: https://github.com/sonyabytes/git-wt
+    description: "Agent-friendly git worktrees: pre-provisioned via copy-on-write, one naming convention"
+    dependencies:
+      - name: git
+    test: |
+      system "#{bin}/git-wt", "--help"
+
+nfpms:
+  - package_name: git-wt
+    formats: [deb, rpm, apk]
+    maintainer: Sonya <sonyatalona@gmail.com>
+    homepage: https://github.com/sonyabytes/git-wt
+    description: "Agent-friendly git worktrees: pre-provisioned via copy-on-write, one naming convention"
+    bindir: /usr/bin
+    dependencies:
+      - git
+
 changelog:
   use: github-native
 

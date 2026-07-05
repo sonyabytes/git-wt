@@ -32,6 +32,17 @@ func main() {
 		fmt.Fprintf(os.Stderr, "git-wt: "+format+"\n", a...)
 	}
 
+	// Help and unknown commands must work outside a git repository.
+	switch os.Args[1] {
+	case "-h", "--help", "help":
+		fmt.Print(usage)
+		return
+	case "new", "ls", "rm", "prune", "init":
+	default:
+		fmt.Fprintf(os.Stderr, "git-wt: unknown command %q\n\n%s", os.Args[1], usage)
+		os.Exit(2)
+	}
+
 	cwd, err := os.Getwd()
 	if err != nil {
 		fatal(err)
@@ -99,13 +110,6 @@ func main() {
 				fatal(err)
 			}
 		}
-
-	case "-h", "--help", "help":
-		fmt.Print(usage)
-
-	default:
-		fmt.Fprintf(os.Stderr, "git-wt: unknown command %q\n\n%s", cmd, usage)
-		os.Exit(2)
 	}
 }
 

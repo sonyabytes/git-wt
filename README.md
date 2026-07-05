@@ -6,15 +6,25 @@ Agent-friendly git worktrees. `git wt new <branch>` creates a worktree that is *
 
 Plain `git worktree add` gives agents (and humans) a checkout that's missing all ignored state: no dependencies, no env file, no caches. Agents then burn time on reinstalls or chase phantom errors — and every agent invents its own worktree location and naming. `git-wt` fixes both.
 
-The mechanism follows one rule: **state an experiment may mutate is CoW-cloned** (writes stay private to the worktree — APFS materializes a real copy only on first write), **state that must stay shared is symlinked** (writes go through). See [CONTEXT.md](CONTEXT.md) for the vocabulary and [docs/adr/0001](docs/adr/0001-cow-clones-over-symlinks-for-mutable-state.md) for why not symlinks-for-everything.
+The mechanism follows one rule: **state an experiment may mutate is CoW-cloned** (writes stay private to the worktree — APFS materializes a real copy only on first write), **state that must stay shared is symlinked** (writes go through). See [CONTEXT.md](CONTEXT.md) for the vocabulary and the reasoning behind CoW clones over symlinks-for-everything.
 
 ## Install
+
+**Homebrew** (macOS, Linuxbrew):
+
+```sh
+brew install sonyabytes/tap/git-wt
+```
+
+**Go**:
 
 ```sh
 go install github.com/sonyabytes/git-wt/cmd/git-wt@latest
 ```
 
-Or grab a prebuilt binary from [Releases](https://github.com/sonyabytes/git-wt/releases). Any `git-wt` on PATH is invokable as `git wt`.
+**Debian/Ubuntu, Fedora/RHEL, Alpine**: `.deb`, `.rpm`, and `.apk` packages are attached to each [release](https://github.com/sonyabytes/git-wt/releases) — install with `dpkg -i` / `rpm -i` / `apk add --allow-untrusted`.
+
+Or grab a prebuilt binary tarball from [Releases](https://github.com/sonyabytes/git-wt/releases). Any `git-wt` on PATH is invokable as `git wt`.
 
 ## Usage
 
