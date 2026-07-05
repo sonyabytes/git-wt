@@ -1,4 +1,4 @@
-name: ci
+name: tests
 
 on:
   push:
@@ -7,21 +7,31 @@ on:
 
 jobs:
   test:
+    name: ${{ matrix.name }}
     strategy:
       fail-fast: false
       matrix:
-        # macOS exercises the APFS clonefile path; ubuntu and windows the
+        # macOS exercises the APFS clonefile path; Linux and Windows the
         # plain-copy fallback. Matrix legs run in parallel.
-        os: [macos-latest, ubuntu-latest, windows-latest]
+        include:
+          - name: macOS
+            os: macos-latest
+          - name: Linux
+            os: ubuntu-latest
+          - name: Windows
+            os: windows-latest
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      - run: go vet ./...
-      - run: go test ./...
-      - run: go build ./...
+      - name: vet
+        run: go vet ./...
+      - name: unit tests
+        run: go test ./...
+      - name: build
+        run: go build ./...
       - name: end-to-end
         # The e2e script needs Unix tooling (df, readlink, symlinks).
         if: runner.os != 'Windows'
