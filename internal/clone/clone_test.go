@@ -3,7 +3,6 @@ package clone
 import (
 	"os"
 	"path/filepath"
-	"syscall"
 	"testing"
 )
 
@@ -39,12 +38,8 @@ func TestTreeClonesContentWithIndependentWrites(t *testing.T) {
 		t.Fatalf("write to clone leaked into source: %q", back)
 	}
 
-	// Clone and source must be distinct inodes.
-	si, _ := os.Stat(filepath.Join(src, "nested", "a.txt"))
-	di, _ := os.Stat(cloned)
-	if si.Sys().(*syscall.Stat_t).Ino == di.Sys().(*syscall.Stat_t).Ino {
-		t.Error("clone shares an inode with source (hardlink, not CoW/copy)")
-	}
+	// Clone and source must be distinct files, not hardlinks.
+	assertDistinctFiles(t, filepath.Join(src, "nested", "a.txt"), cloned)
 }
 
 func TestTreeRefusesExistingDestination(t *testing.T) {

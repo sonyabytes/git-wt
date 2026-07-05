@@ -8,9 +8,11 @@ on:
 jobs:
   test:
     strategy:
+      fail-fast: false
       matrix:
-        # macOS exercises the APFS clonefile path; ubuntu exercises the plain-copy fallback.
-        os: [macos-latest, ubuntu-latest]
+        # macOS exercises the APFS clonefile path; ubuntu and windows the
+        # plain-copy fallback. Matrix legs run in parallel.
+        os: [macos-latest, ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -21,4 +23,6 @@ jobs:
       - run: go test ./...
       - run: go build ./...
       - name: end-to-end
+        # The e2e script needs Unix tooling (df, readlink, symlinks).
+        if: runner.os != 'Windows'
         run: bash scripts/e2e.sh
