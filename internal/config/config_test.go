@@ -32,6 +32,7 @@ func TestRepoConfigOverridesDefaults(t *testing.T) {
 	toml := `
 setup = "make deps"
 clone = ["dist"]
+share = ["secrets"]
 skip  = ["node_modules"]
 `
 	if err := os.WriteFile(filepath.Join(dir, FileName), []byte(toml), 0o644); err != nil {
@@ -50,8 +51,55 @@ skip  = ["node_modules"]
 	if got, _ := cfg.Classify("node_modules"); got != Skip {
 		t.Errorf("repo rule should override default: node_modules = %v, want skip", got)
 	}
+	if got, _ := cfg.Classify("secrets"); got != Share {
+		t.Errorf("share rule should apply: secrets = %v, want share", got)
+	}
 	if got, ok := cfg.Classify(".env"); !ok || got != Share {
 		t.Errorf("defaults should still apply: .env = %v, %v", got, ok)
+	}
+}
+
+func TestPathsTable(t *testing.T) {
+	dir := t.TempDir()
+	toml := `
+[paths]
+"vendor" = "clone"
+".cache" = "skip"
+`
+	if err := os.WriteFile(filepath.Join(dir, FileName), []byte(toml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := cfg.Classify("vendor"); got != Clone {
+		t.Errorf("vendor = %v, want clone", got)
+	}
+	if got, _ := cfg.Classify(".cache"); got != Skip {
+		t.Errorf(".cache = %v, want skip", got)
+	}
+}
+
+func TestLoadInvalidTOML(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, FileName), []byte("not = [valid"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(dir); err == nil {
+		t.Fatal("expected decode error for invalid TOML")
+	}
+}
+
+func TestLoadUnreadableFile(t *testing.T) {
+	// A directory named like the config file makes ReadFile fail with an
+	// error that is not ErrNotExist.
+	dir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dir, FileName), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(dir); err == nil {
+		t.Fatal("expected read error when config path is a directory")
 	}
 }
 

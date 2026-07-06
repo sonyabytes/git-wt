@@ -118,7 +118,9 @@ func (r *Repo) Prune(logf func(string, ...any)) ([]string, error) {
 		}
 		removed = append(removed, path)
 	}
-	if _, err := r.git("worktree", "prune"); err != nil {
+	// Not reachable in practice: every git call above already succeeded
+	// against the same repository.
+	if _, err := r.git("worktree", "prune"); err != nil { // coverage-ignore
 		return removed, err
 	}
 	return removed, nil
@@ -217,7 +219,8 @@ func (r *Repo) Init(placement string, logf func(string, ...any)) error {
 		return err
 	}
 	defer f.Close()
-	if _, err := f.WriteString(claudeMdLine); err != nil {
+	// Writes to a freshly opened append fd only fail on disk-level errors.
+	if _, err := f.WriteString(claudeMdLine); err != nil { // coverage-ignore
 		return err
 	}
 	logf("appended worktree guidance to CLAUDE.md")

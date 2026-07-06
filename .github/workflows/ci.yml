@@ -29,7 +29,14 @@ jobs:
       - name: vet
         run: go vet ./...
       - name: unit tests
-        run: go test ./...
+        run: go test ./... -coverprofile=cover.out -covermode=atomic -coverpkg=./...
+      - name: enforce 100% coverage
+        # Several error-path tests need Unix permission semantics (chmod) and
+        # are skipped on Windows, so the gate runs on the Unix legs only.
+        # Invoked via `go run` because the go-test-coverage GitHub Action is
+        # a container action and only works on Linux runners.
+        if: runner.os != 'Windows'
+        run: go run github.com/vladopajic/go-test-coverage/v2@v2.18.8 --config=.testcoverage.yml
       - name: build
         run: go build ./...
       - name: end-to-end
