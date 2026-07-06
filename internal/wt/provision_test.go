@@ -129,6 +129,48 @@ func TestProvisionShareFails(t *testing.T) {
 	}
 }
 
+// stubCloneTree forces provision's clone outcome so both the cloning and
+// copying log lines are exercised regardless of the host filesystem.
+func stubCloneTree(t *testing.T, cow bool) {
+	t.Helper()
+	orig := cloneTree
+	cloneTree = func(src, dst string) (bool, error) {
+		if err := os.MkdirAll(dst, 0o755); err != nil {
+			return false, err
+		}
+		return cow, nil
+	}
+	t.Cleanup(func() { cloneTree = orig })
+}
+
+func provisionCloneLog(t *testing.T) string {
+	t.Helper()
+	r, wt := fakeRepo(t)
+	if err := os.MkdirAll(filepath.Join(r.MainRoot, "node_modules"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfg := rules(config.Rule{Pattern: "node_modules", Action: config.Clone})
+	var lines []string
+	if err := r.provision(cfg, wt, grabLog(&lines)); err != nil {
+		t.Fatal(err)
+	}
+	return strings.Join(lines, "\n")
+}
+
+func TestProvisionLogsCloningWhenCoWHits(t *testing.T) {
+	stubCloneTree(t, true)
+	if log := provisionCloneLog(t); !strings.Contains(log, "cloning") {
+		t.Errorf("log = %q, want cloning line", log)
+	}
+}
+
+func TestProvisionLogsCopyingOnFallback(t *testing.T) {
+	stubCloneTree(t, false)
+	if log := provisionCloneLog(t); !strings.Contains(log, "copying") || !strings.Contains(log, "copy-on-write unavailable") {
+		t.Errorf("log = %q, want copying line naming the CoW fallback", log)
+	}
+}
+
 func TestSetupCommand(t *testing.T) {
 	dir := t.TempDir()
 	if got := setupCommand(&config.Config{Setup: "make deps"}, dir); got != "make deps" {
@@ -143,6 +185,10 @@ func TestSetupCommand(t *testing.T) {
 		"pnpm-lock.yaml":    "pnpm install",
 		"yarn.lock":         "yarn install",
 		"package-lock.json": "npm install",
+		"uv.lock":           "uv sync",
+		"poetry.lock":       "poetry install",
+		"Gemfile.lock":      "bundle install",
+		"composer.lock":     "composer install",
 	} {
 		probe := t.TempDir()
 		if err := os.WriteFile(filepath.Join(probe, file), nil, 0o644); err != nil {

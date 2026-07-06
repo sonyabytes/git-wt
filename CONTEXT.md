@@ -12,7 +12,7 @@
 
 **Sibling Convention** — the default Placement: worktrees live in `../<repo>.worktrees/<branch-sanitized>` next to the Main Checkout.
 
-**Cloned State** — mutable, per-worktree ignored files (e.g. `node_modules`, `.turbo`) copied from the Main Checkout via filesystem copy-on-write (APFS `clonefile`). The clone costs ~zero disk/time; a file becomes a real independent copy only when written. Writes in a worktree never affect the Main Checkout.
+**Cloned State** — mutable, per-worktree ignored files (e.g. `node_modules`, `.turbo`) copied from the Main Checkout via filesystem copy-on-write (APFS `clonefile` on macOS, `FICLONE` reflinks on Linux btrfs/XFS; plain copy elsewhere). The clone costs ~zero disk/time; a file becomes a real independent copy only when written. Writes in a worktree never affect the Main Checkout.
 
 **Shared State** — singleton ignored files where write-through is *desired* (e.g. `.env`, a local dev database). Symlinked back to the Main Checkout; all worktrees see and mutate the same file.
 

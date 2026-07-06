@@ -1,6 +1,6 @@
 # git-wt
 
-Agent-friendly git worktrees. `git wt new <branch>` creates a worktree that is **ready to work in** — `node_modules` arrives via copy-on-write clone (near-zero time and disk on APFS), `.env` is symlinked, the setup command has already run — and it lands in one predictable, [configurable](#configuration--worktreetoml) place (default: `../<repo>.worktrees/<branch>`).
+Agent-friendly git worktrees. `git wt new <branch>` creates a worktree that is **ready to work in** — `node_modules` arrives via copy-on-write clone (near-zero time and disk on APFS and on Linux btrfs/XFS), `.env` is symlinked, the setup command has already run — and it lands in one predictable, [configurable](#configuration--worktreetoml) place (default: `../<repo>.worktrees/<branch>`).
 
 ## Why
 
@@ -31,6 +31,7 @@ Or grab a prebuilt binary tarball from [Releases](https://github.com/sonyabytes/
 ```sh
 git wt new feature/auth       # create branch (if needed) + provisioned worktree; prints its path
 git wt new feature/auth --porcelain   # path only on stdout, for scripts/agents
+git wt new feature/auth --from=origin/main   # base a newly created branch on a ref other than HEAD
 git wt ls                     # managed worktrees: path<TAB>branch
 git wt rm feature/auth        # refuses on uncommitted/unpushed work; --force overrides; never deletes the branch
 git wt prune                  # remove clean worktrees whose branches are merged into HEAD
@@ -38,6 +39,7 @@ git wt init                   # scaffold .worktree.toml + append agent guidance 
                               # prompts for worktree placement when run at a terminal
 git wt init --placement=inside   # skip the prompt (sibling|inside|home|<template>)
 git wt init --hook            # …plus a Claude Code hook blocking raw 'git worktree add'
+git wt version                # print the git-wt version
 ```
 
 ## Configuration — `.worktree.toml`
@@ -64,10 +66,21 @@ First match wins; repo rules precede built-in defaults.
 ```toml
 # setup = "bun install"    # run in every new worktree; default: auto-detected from lockfile
 
-clone = ["node_modules", ".turbo", ".next/cache"]  # CoW-cloned: private to the worktree
-share = [".env", ".env.*"]                         # symlinked: write-through to main checkout
-skip  = ["dist", "build", "out"]                   # not provisioned; rebuilt in the worktree
+clone = ["node_modules", ".turbo", ".next/cache", ".venv", "target", "vendor"]  # CoW-cloned: private to the worktree
+share = [".env", ".env.*"]                                                      # symlinked: write-through to main checkout
+skip  = ["dist", "build", "out"]                                                # not provisioned; rebuilt in the worktree
 ```
+
+The same rules can be written as an explicit `[paths]` table (`pattern = "action"`), useful when generating the file programmatically:
+
+```toml
+[paths]
+"node_modules" = "clone"
+".env"         = "share"
+"dist"         = "skip"
+```
+
+The setup command is auto-detected from lockfiles when `setup` is unset: `bun.lock`/`bun.lockb` → `bun install`, `pnpm-lock.yaml` → `pnpm install`, `yarn.lock` → `yarn install`, `package-lock.json` → `npm install`, `uv.lock` → `uv sync`, `poetry.lock` → `poetry install`, `Gemfile.lock` → `bundle install`, `composer.lock` → `composer install`.
 
 ## Real-world measurements
 
@@ -83,7 +96,7 @@ Measured on macOS/APFS (Apple Silicon) by creating a fresh project per ecosystem
 | bundler 4.0 (Ruby) | `vendor` + `.bundle` 45 MB | 0.1 s | 45 MB | ~3 MB | `bundle check` satisfied |
 | python 3.14 (venv) | `.venv` 126 MB | 0.13 s | 126 MB | ~1 MB | `import numpy, pandas`; `sys.prefix` points at worktree |
 
-Non-default ecosystems used a two-line `.worktree.toml` (`clone = ["target"]`, `clone = ["vendor"]`, `clone = [".venv"]`, …). A stock `git worktree add` on the same repos produced a 20–200 KB checkout with none of this state.
+All seven ecosystems above are now covered by the built-in defaults (`node_modules`, `.turbo`, `.next/cache`, `.venv`, `target`, `vendor`); at measurement time the non-JS ones needed a two-line `.worktree.toml`. A stock `git worktree add` on the same repos produced a 20–200 KB checkout with none of this state.
 
 Caveats found during testing:
 
@@ -93,6 +106,7 @@ Caveats found during testing:
 
 ## Notes
 
-- macOS/APFS-first. On filesystems without CoW cloning, `clone` degrades to a plain copy (correct, just slower). Linux reflink support is a planned drop-in.
+- Copy-on-write cloning works on macOS/APFS (`clonefile`, whole-tree) and Linux btrfs/XFS (`FICLONE` reflinks, per-file). On filesystems without CoW (ext4, or cross-volume placements), `clone` degrades to a plain copy — correct, just slower, and `git wt new` says so in its log.
+- **Windows**: sharing `.env` via symlink requires Developer Mode (or admin); the setup command runs via `cmd /c`, so `setup =` values must be valid for `cmd.exe`.
 - `prune` never touches a worktree whose branch ref was deleted underneath it — that state makes every file look uncommitted, so it's reported and left for `git wt rm --force`.
 - Verification: `go test ./...` plus `scripts/e2e.sh` (full scenario suite incl. CoW disk-usage proof).

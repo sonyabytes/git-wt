@@ -1,11 +1,10 @@
-//go:build !darwin
+//go:build !darwin && !linux
 
 package clone
 
 import "errors"
 
-// cowClone is unsupported off darwin for now; Tree falls back to a plain
-// copy. Linux reflink (btrfs/XFS) can slot in here later.
+// cowClone is unsupported on this platform; Tree falls back to a plain copy.
 func cowClone(src, dst string) error {
 	return errors.New("cow clone unsupported on this platform")
 }

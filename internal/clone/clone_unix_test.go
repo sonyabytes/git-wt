@@ -24,7 +24,7 @@ func TestCopyTreePreservesSymlinks(t *testing.T) {
 		t.Fatal(err)
 	}
 	dst := filepath.Join(dir, "dst")
-	if err := Tree(src, dst); err != nil {
+	if _, err := Tree(src, dst); err != nil {
 		t.Fatal(err)
 	}
 	link, err := os.Readlink(filepath.Join(dst, "link"))
@@ -44,7 +44,7 @@ func TestCopyTreeSkipsIrregularFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 	dst := filepath.Join(dir, "dst")
-	if err := Tree(src, dst); err != nil {
+	if _, err := Tree(src, dst); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Lstat(filepath.Join(dst, "pipe")); !os.IsNotExist(err) {
@@ -70,8 +70,38 @@ func TestCopyTreeReportsWalkErrors(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { os.Chmod(sealed, 0o755) })
-	if err := Tree(src, filepath.Join(dir, "dst")); err == nil {
+	if _, err := Tree(src, filepath.Join(dir, "dst")); err == nil {
 		t.Fatal("expected walk error for unreadable subdirectory")
+	}
+}
+
+func TestTreeFallbackCleanupFails(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("permission bits are ignored when running as root")
+	}
+	// Simulate a per-file clone that dies mid-tree leaving a destination the
+	// fallback's cleanup cannot list.
+	stubCoW(t, func(src, dst string) error {
+		if err := os.MkdirAll(dst, 0o755); err != nil {
+			return err
+		}
+		if err := os.WriteFile(filepath.Join(dst, "partial"), nil, 0o644); err != nil {
+			return err
+		}
+		if err := os.Chmod(dst, 0); err != nil {
+			return err
+		}
+		return errFake
+	})
+	dir := t.TempDir()
+	src := filepath.Join(dir, "src")
+	if err := os.MkdirAll(src, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	dst := filepath.Join(dir, "dst")
+	t.Cleanup(func() { os.Chmod(dst, 0o755) })
+	if _, err := Tree(src, dst); err == nil {
+		t.Fatal("expected cleanup error when the partial destination is sealed")
 	}
 }
 

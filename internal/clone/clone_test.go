@@ -21,7 +21,7 @@ func TestTreeClonesContentWithIndependentWrites(t *testing.T) {
 	}
 
 	dst := filepath.Join(dir, "dst")
-	if err := Tree(src, dst); err != nil {
+	if _, err := Tree(src, dst); err != nil {
 		t.Fatal(err)
 	}
 
@@ -61,8 +61,12 @@ func TestTreeReturnsOnCoWSuccess(t *testing.T) {
 	if err := os.MkdirAll(src, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := Tree(src, filepath.Join(dir, "dst")); err != nil {
+	cow, err := Tree(src, filepath.Join(dir, "dst"))
+	if err != nil {
 		t.Fatalf("Tree with successful CoW = %v", err)
+	}
+	if !cow {
+		t.Error("Tree should report cow=true when the CoW clone succeeds")
 	}
 }
 
@@ -77,8 +81,12 @@ func TestTreeFallsBackToPlainCopy(t *testing.T) {
 		t.Fatal(err)
 	}
 	dst := filepath.Join(dir, "dst")
-	if err := Tree(src, dst); err != nil {
+	cow, err := Tree(src, dst)
+	if err != nil {
 		t.Fatal(err)
+	}
+	if cow {
+		t.Error("Tree should report cow=false on the plain-copy fallback")
 	}
 	got, err := os.ReadFile(filepath.Join(dst, "nested", "a.txt"))
 	if err != nil || string(got) != "data" {
@@ -94,7 +102,7 @@ func TestTreeFailsWhenDestinationParentIsFile(t *testing.T) {
 	if err := os.WriteFile(file, nil, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := Tree(src, filepath.Join(file, "sub", "dst")); err == nil {
+	if _, err := Tree(src, filepath.Join(file, "sub", "dst")); err == nil {
 		t.Fatal("expected error when destination parent path crosses a file")
 	}
 }
@@ -123,7 +131,7 @@ func TestTreeRefusesExistingDestination(t *testing.T) {
 	dst := filepath.Join(dir, "dst")
 	os.MkdirAll(src, 0o755)
 	os.MkdirAll(dst, 0o755)
-	if err := Tree(src, dst); err == nil {
+	if _, err := Tree(src, dst); err == nil {
 		t.Fatal("expected error for existing destination")
 	}
 }

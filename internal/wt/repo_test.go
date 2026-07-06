@@ -28,7 +28,7 @@ func TestDiscoverFromRepoAndWorktree(t *testing.T) {
 		t.Errorf("Discover from subdir found %q, want %q", fromSub.MainRoot, r.MainRoot)
 	}
 
-	wtPath, err := r.New("feat", discardLog)
+	wtPath, err := r.New("feat", "", discardLog)
 	if err != nil {
 		t.Fatal(err)
 	}

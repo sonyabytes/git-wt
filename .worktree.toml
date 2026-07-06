@@ -1,0 +1,6 @@
+# git-wt provisioning classification (first match wins; these precede built-in defaults)
+# setup = "bun install"   # command run in every new worktree; default: auto-detect from lockfile
+
+clone = ["node_modules", ".turbo", ".next/cache", ".venv", "target", "vendor"]  # CoW-cloned: private to the worktree
+share = [".env", ".env.*"]                                                      # symlinked: write-through to main checkout
+skip  = ["dist", "build", "out"]                                                # not provisioned; rebuilt in the worktree
