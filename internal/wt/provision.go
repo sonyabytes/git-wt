@@ -68,27 +68,12 @@ func (r *Repo) provision(cfg *config.Config, wtPath string, logf func(string, ..
 }
 
 // setupCommand resolves the configured setup command, or detects a package
-// manager install from lockfiles in the worktree. Empty means nothing to run.
+// manager install from the toolchain table. Empty means nothing to run.
 func setupCommand(cfg *config.Config, wtPath string) string {
 	if cfg.Setup != "" {
 		return cfg.Setup
 	}
-	for _, probe := range []struct{ file, cmd string }{
-		{"bun.lock", "bun install"},
-		{"bun.lockb", "bun install"},
-		{"pnpm-lock.yaml", "pnpm install"},
-		{"yarn.lock", "yarn install"},
-		{"package-lock.json", "npm install"},
-		{"uv.lock", "uv sync"},
-		{"poetry.lock", "poetry install"},
-		{"Gemfile.lock", "bundle install"},
-		{"composer.lock", "composer install"},
-	} {
-		if _, err := os.Stat(filepath.Join(wtPath, probe.file)); err == nil {
-			return probe.cmd
-		}
-	}
-	return ""
+	return config.DetectSetup(wtPath)
 }
 
 // runSetup executes the setup command in the worktree via the platform
