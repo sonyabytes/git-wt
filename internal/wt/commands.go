@@ -12,11 +12,19 @@ import (
 
 // New creates a worktree for branch under the configured placement, provisions
 // cloned/shared state, and runs the setup command. Returns the worktree path.
-// The branch is created (from HEAD of the main checkout) if it doesn't exist.
-func (r *Repo) New(branch string, logf func(string, ...any)) (string, error) {
+// The branch is created if it doesn't exist — from base when given, otherwise
+// from HEAD of the main checkout.
+func (r *Repo) New(branch, base string, logf func(string, ...any)) (string, error) {
 	cfg := r.Cfg
 	path := r.WorktreePath(branch)
 	if _, err := os.Stat(path); err == nil {
+		// Distinguish a repeat of the same branch from a sanitization
+		// collision (feature/auth and feature-auth share a directory).
+		if managed, err := r.managedWorktrees(); err == nil {
+			if owner, ok := managed[path]; ok && owner != branch {
+				return "", fmt.Errorf("worktree path %s already belongs to branch %q (%q maps to the same directory after sanitization)", path, owner, branch)
+			}
+		}
 		return "", fmt.Errorf("worktree already exists: %s", path)
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -29,7 +37,13 @@ func (r *Repo) New(branch string, logf func(string, ...any)) (string, error) {
 	args := []string{"worktree", "add"}
 	if !r.branchExists(branch) {
 		args = append(args, "-b", branch, path)
+		if base != "" {
+			args = append(args, base)
+		}
 	} else {
+		if base != "" {
+			return "", fmt.Errorf("branch %q already exists; --from only applies when creating a new branch", branch)
+		}
 		args = append(args, path, branch)
 	}
 	if err := r.gitPassthrough(args...); err != nil {
@@ -108,7 +122,13 @@ func (r *Repo) Prune(logf func(string, ...any)) ([]string, error) {
 		if _, err := r.git("merge-base", "--is-ancestor", branch, "HEAD"); err != nil {
 			continue // unmerged work
 		}
-		if dirty, _ := r.isDirty(path); dirty {
+		dirty, err := r.isDirty(path)
+		if err != nil {
+			// Can't tell real work from none — never auto-remove blind.
+			logf("skipping %s: %v", path, err)
+			continue
+		}
+		if dirty {
 			logf("skipping %s: uncommitted changes", path)
 			continue
 		}
@@ -172,9 +192,9 @@ func DefaultConfigTOML(placement string) string {
 #   or a path template with {repo} and {branch}, e.g. "~/wt/{repo}/{branch}"
 worktrees = ` + fmt.Sprintf("%q", placement) + `
 
-clone = ["node_modules", ".turbo", ".next/cache"]  # CoW-cloned: private to the worktree
-share = [".env", ".env.*"]                         # symlinked: write-through to main checkout
-skip  = ["dist", "build", "out"]                   # not provisioned; rebuilt in the worktree
+clone = ["node_modules", ".turbo", ".next/cache", ".venv", "target", "vendor"]  # CoW-cloned: private to the worktree
+share = [".env", ".env.*"]                                                      # symlinked: write-through to main checkout
+skip  = ["dist", "build", "out"]                                                # not provisioned; rebuilt in the worktree
 `
 }
 

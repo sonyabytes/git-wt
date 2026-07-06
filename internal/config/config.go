@@ -6,8 +6,10 @@ package config
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 
 	"github.com/BurntSushi/toml"
 )
@@ -36,8 +38,8 @@ type Rule struct {
 type Config struct {
 	// Rules are checked in order; first match wins. Repo rules precede defaults.
 	Rules []Rule
-	// Setup is the command run (via sh -c, in the new worktree) after
-	// provisioning. Empty means auto-detect a package-manager install.
+	// Setup is the command run (via the platform shell, in the new worktree)
+	// after provisioning. Empty means auto-detect a package-manager install.
 	Setup string
 	// Worktrees is the raw placement value: a preset name ("sibling",
 	// "inside", "home") or a path template with {repo}/{branch}
@@ -49,11 +51,16 @@ type Config struct {
 const FileName = ".worktree.toml"
 
 // Defaults ship with the tool; conservative direction is clone (forked state
-// is annoying, corrupted main-checkout state is dangerous).
+// is annoying, corrupted main-checkout state is dangerous). Tracked paths
+// that happen to share these names (a committed vendor/ or target/) are
+// safe: provisioning never touches paths already present in the worktree.
 var Defaults = []Rule{
 	{Pattern: "node_modules", Action: Clone},
 	{Pattern: ".turbo", Action: Clone},
 	{Pattern: ".next/cache", Action: Clone},
+	{Pattern: ".venv", Action: Clone},  // Python
+	{Pattern: "target", Action: Clone}, // Rust
+	{Pattern: "vendor", Action: Clone}, // Go, Ruby, PHP
 	{Pattern: ".env", Action: Share},
 	{Pattern: ".env.*", Action: Share},
 	{Pattern: "dist", Action: Skip},
@@ -99,8 +106,19 @@ func Load(repoRoot string) (*Config, error) {
 	for _, p := range f.Skip {
 		cfg.Rules = append(cfg.Rules, Rule{Pattern: p, Action: Skip})
 	}
-	for p, a := range f.Paths {
-		cfg.Rules = append(cfg.Rules, Rule{Pattern: p, Action: Action(a)})
+	// Sorted so first-match-wins stays deterministic across runs — Go map
+	// iteration order would otherwise reshuffle overlapping patterns.
+	patterns := make([]string, 0, len(f.Paths))
+	for p := range f.Paths {
+		patterns = append(patterns, p)
+	}
+	sort.Strings(patterns)
+	for _, p := range patterns {
+		a := Action(f.Paths[p])
+		if a != Clone && a != Share && a != Skip {
+			return nil, fmt.Errorf("%s: invalid action %q for pattern %q (want %q, %q, or %q)", FileName, f.Paths[p], p, Clone, Share, Skip)
+		}
+		cfg.Rules = append(cfg.Rules, Rule{Pattern: p, Action: a})
 	}
 	cfg.Rules = append(cfg.Rules, Defaults...)
 	return cfg, nil

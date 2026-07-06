@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -13,6 +14,9 @@ func TestDefaultsWhenNoFile(t *testing.T) {
 	}
 	for rel, want := range map[string]Action{
 		"node_modules": Clone,
+		".venv":        Clone,
+		"target":       Clone,
+		"vendor":       Clone,
 		".env":         Share,
 		".env.local":   Share,
 		"dist":         Skip,
@@ -78,6 +82,49 @@ func TestPathsTable(t *testing.T) {
 	}
 	if got, _ := cfg.Classify(".cache"); got != Skip {
 		t.Errorf(".cache = %v, want skip", got)
+	}
+}
+
+func TestPathsTableRejectsUnknownAction(t *testing.T) {
+	dir := t.TempDir()
+	toml := `
+[paths]
+"vendor" = "clon"
+`
+	if err := os.WriteFile(filepath.Join(dir, FileName), []byte(toml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := Load(dir)
+	if err == nil {
+		t.Fatal("expected error for unknown action")
+	}
+	for _, want := range []string{"clon", "vendor"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q should mention %q", err, want)
+		}
+	}
+}
+
+func TestPathsTableOrderIsDeterministic(t *testing.T) {
+	dir := t.TempDir()
+	// Both patterns match ".envrc"; first match must win the same way on
+	// every run, and rules sort by pattern (".env*" < ".envrc").
+	toml := `
+[paths]
+".envrc" = "skip"
+".env*"  = "share"
+`
+	if err := os.WriteFile(filepath.Join(dir, FileName), []byte(toml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for range 20 {
+		cfg, err := Load(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got, _ := cfg.Classify(".envrc"); got != Share {
+			t.Fatalf(".envrc = %v, want share (sorted-pattern order)", got)
+		}
 	}
 }
 

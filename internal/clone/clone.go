@@ -13,22 +13,35 @@ import (
 // CoW path or the plain-copy fallback regardless of the host filesystem.
 var doCoW = cowClone
 
-// Tree clones src to dst. dst must not exist. On APFS the whole tree is
-// cloned in one clonefile call; otherwise the tree is walked and copied.
-func Tree(src, dst string) error {
+// Tree clones src to dst and reports whether copy-on-write was used. dst
+// must not exist. Where CoW is available the whole tree is cloned; otherwise
+// (unsupported filesystem, cross-volume placement) the tree is walked and
+// plainly copied.
+func Tree(src, dst string) (cow bool, err error) {
 	if _, err := os.Lstat(dst); err == nil {
-		return fmt.Errorf("clone destination already exists: %s", dst)
+		return false, fmt.Errorf("clone destination already exists: %s", dst)
 	}
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
-		return err
+		return false, err
 	}
 	if err := doCoW(src, dst); err == nil {
-		return nil
+		return true, nil
 	}
-	return copyTree(src, dst)
+	// A failed CoW attempt may have left a partial tree (per-file reflink
+	// walks are not atomic); clear it so the plain copy starts fresh.
+	if err := os.RemoveAll(dst); err != nil {
+		return false, err
+	}
+	return false, copyTree(src, dst)
 }
 
 func copyTree(src, dst string) error {
+	return walkTree(src, dst, copyFile)
+}
+
+// walkTree recreates src's directories and symlinks under dst and hands each
+// regular file to fileOp — a plain copy or a per-file reflink.
+func walkTree(src, dst string, fileOp func(src, dst string, perm os.FileMode) error) error {
 	return filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
@@ -50,7 +63,7 @@ func copyTree(src, dst string) error {
 			}
 			return os.Symlink(link, target)
 		case info.Mode().IsRegular():
-			return copyFile(path, target, info.Mode().Perm())
+			return fileOp(path, target, info.Mode().Perm())
 		default:
 			return nil // sockets, devices: skip
 		}

@@ -5,6 +5,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"runtime/debug"
 	"strings"
 	"testing"
 )
@@ -60,6 +61,41 @@ func TestRunHelp(t *testing.T) {
 		if code != 0 || !strings.Contains(stdout, "usage: git wt") {
 			t.Errorf("%s: code=%d stdout=%q, want 0 + usage", arg, code, stdout)
 		}
+	}
+}
+
+func TestRunVersion(t *testing.T) {
+	for _, arg := range []string{"version", "--version"} {
+		code, stdout, _ := runWT(t, "", false, arg)
+		if code != 0 || !strings.HasPrefix(stdout, "git-wt ") {
+			t.Errorf("%s: code=%d stdout=%q, want 0 + git-wt prefix", arg, code, stdout)
+		}
+	}
+}
+
+func TestVersionStringPrefersStampedVersion(t *testing.T) {
+	orig := version
+	version = "v1.2.3"
+	t.Cleanup(func() { version = orig })
+	if got := versionString(); got != "v1.2.3" {
+		t.Errorf("versionString() = %q, want stamped v1.2.3", got)
+	}
+}
+
+func TestVersionStringFallsBackToBuildInfo(t *testing.T) {
+	orig := readBuildInfo
+	t.Cleanup(func() { readBuildInfo = orig })
+
+	readBuildInfo = func() (*debug.BuildInfo, bool) {
+		return &debug.BuildInfo{Main: debug.Module{Version: "v9.9.9"}}, true
+	}
+	if got := versionString(); got != "v9.9.9" {
+		t.Errorf("versionString() = %q, want module version v9.9.9", got)
+	}
+
+	readBuildInfo = func() (*debug.BuildInfo, bool) { return nil, false }
+	if got := versionString(); got != "dev" {
+		t.Errorf("versionString() without build info = %q, want dev", got)
 	}
 }
 
@@ -125,6 +161,23 @@ func TestRunNewArgErrors(t *testing.T) {
 	}
 	if code, _, _ := runWT(t, "", false, "new", "bad..name"); code != 1 {
 		t.Errorf("new with invalid ref: code=%d, want 1", code)
+	}
+	// A dangling --from swallows the branch as its value, leaving no
+	// positional args — rejected with the usage error.
+	if code, _, _ := runWT(t, "", false, "new", "feat", "--from"); code != 1 {
+		t.Errorf("new with dangling --from: code=%d, want 1", code)
+	}
+}
+
+func TestRunNewFromRef(t *testing.T) {
+	initRepo(t)
+	// The space-separated form exercises rest()'s value-flag reordering.
+	code, stdout, stderr := runWT(t, "", false, "new", "feat", "--from", "main")
+	if code != 0 {
+		t.Fatalf("new --from main: code=%d stderr=%q", code, stderr)
+	}
+	if _, err := os.Stat(strings.TrimSpace(stdout)); err != nil {
+		t.Fatalf("printed worktree path does not exist: %v", err)
 	}
 }
 

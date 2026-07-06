@@ -21,7 +21,7 @@ func TestNewProvisionsCloneAndShare(t *testing.T) {
 	}
 
 	var lines []string
-	path, err := r.New("feature/auth", grabLog(&lines))
+	path, err := r.New("feature/auth", "", grabLog(&lines))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -35,15 +35,19 @@ func TestNewProvisionsCloneAndShare(t *testing.T) {
 		t.Errorf(".env should be a symlink, got %v, %v", fi, err)
 	}
 	joined := strings.Join(lines, "\n")
-	if !strings.Contains(joined, "cloning") || !strings.Contains(joined, "sharing") {
-		t.Errorf("log should mention cloning and sharing, got:\n%s", joined)
+	// "cloning" where CoW is available (APFS), "copying" on the fallback.
+	if !strings.Contains(joined, "cloning") && !strings.Contains(joined, "copying") {
+		t.Errorf("log should mention cloning or copying, got:\n%s", joined)
+	}
+	if !strings.Contains(joined, "sharing") {
+		t.Errorf("log should mention sharing, got:\n%s", joined)
 	}
 }
 
 func TestNewUsesExistingBranch(t *testing.T) {
 	r := initRepo(t)
 	mustGit(t, r.MainRoot, "branch", "existing")
-	path, err := r.New("existing", discardLog)
+	path, err := r.New("existing", "", discardLog)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,11 +58,48 @@ func TestNewUsesExistingBranch(t *testing.T) {
 
 func TestNewRefusesExistingWorktree(t *testing.T) {
 	r := initRepo(t)
-	if _, err := r.New("dup", discardLog); err != nil {
+	if _, err := r.New("dup", "", discardLog); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := r.New("dup", discardLog); err == nil || !strings.Contains(err.Error(), "already exists") {
+	if _, err := r.New("dup", "", discardLog); err == nil || !strings.Contains(err.Error(), "already exists") {
 		t.Fatalf("second New = %v, want already-exists error", err)
+	}
+}
+
+func TestNewReportsSanitizationCollision(t *testing.T) {
+	r := initRepo(t)
+	if _, err := r.New("feature/auth", "", discardLog); err != nil {
+		t.Fatal(err)
+	}
+	_, err := r.New("feature-auth", "", discardLog)
+	if err == nil || !strings.Contains(err.Error(), "sanitization") || !strings.Contains(err.Error(), `"feature/auth"`) {
+		t.Fatalf("New = %v, want collision error naming feature/auth", err)
+	}
+}
+
+func TestNewFromBaseRef(t *testing.T) {
+	r := initRepo(t)
+	base := strings.TrimSpace(mustGit(t, r.MainRoot, "rev-parse", "HEAD"))
+	// A second commit moves HEAD past the base ref.
+	if err := os.WriteFile(filepath.Join(r.MainRoot, "more.txt"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mustGit(t, r.MainRoot, "add", ".")
+	mustGit(t, r.MainRoot, "commit", "-m", "second")
+	path, err := r.New("feat", base, discardLog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if head := strings.TrimSpace(mustGit(t, path, "rev-parse", "HEAD")); head != base {
+		t.Errorf("worktree HEAD = %s, want base %s", head, base)
+	}
+}
+
+func TestNewFromRejectsExistingBranch(t *testing.T) {
+	r := initRepo(t)
+	mustGit(t, r.MainRoot, "branch", "existing")
+	if _, err := r.New("existing", "main", discardLog); err == nil || !strings.Contains(err.Error(), "--from") {
+		t.Fatalf("New = %v, want error explaining --from needs a new branch", err)
 	}
 }
 
@@ -68,7 +109,7 @@ func TestNewFailsWhenPlacementParentIsFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	r = writeConfig(t, r, `worktrees = "container/{branch}"`)
-	if _, err := r.New("feat", discardLog); err == nil {
+	if _, err := r.New("feat", "", discardLog); err == nil {
 		t.Fatal("expected MkdirAll error when placement parent is a file")
 	}
 }
@@ -84,14 +125,14 @@ func TestNewFailsWhenExcludeFileUnwritable(t *testing.T) {
 	if err := os.WriteFile(info, nil, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := r.New("feat", discardLog); err == nil {
+	if _, err := r.New("feat", "", discardLog); err == nil {
 		t.Fatal("expected ensureExcluded error")
 	}
 }
 
 func TestNewFailsOnInvalidBranchName(t *testing.T) {
 	r := initRepo(t)
-	if _, err := r.New("bad..name", discardLog); err == nil {
+	if _, err := r.New("bad..name", "", discardLog); err == nil {
 		t.Fatal("expected git worktree add to fail on invalid ref name")
 	}
 }
@@ -99,7 +140,7 @@ func TestNewFailsOnInvalidBranchName(t *testing.T) {
 func TestNewFailsOnBadProvisionPattern(t *testing.T) {
 	r := initRepo(t)
 	r = writeConfig(t, r, `clone = ["["]`)
-	if _, err := r.New("feat", discardLog); err == nil || !strings.Contains(err.Error(), "bad pattern") {
+	if _, err := r.New("feat", "", discardLog); err == nil || !strings.Contains(err.Error(), "bad pattern") {
 		t.Fatalf("New = %v, want bad-pattern error", err)
 	}
 }
@@ -108,7 +149,7 @@ func TestNewRunsSetupCommand(t *testing.T) {
 	needsUnix(t) // setup runs via sh
 	r := initRepo(t)
 	r = writeConfig(t, r, `setup = "echo ok > setup-ran"`)
-	path, err := r.New("feat", discardLog)
+	path, err := r.New("feat", "", discardLog)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -121,7 +162,7 @@ func TestNewFailsWhenSetupFails(t *testing.T) {
 	needsUnix(t)
 	r := initRepo(t)
 	r = writeConfig(t, r, `setup = "false"`)
-	if _, err := r.New("feat", discardLog); err == nil || !strings.Contains(err.Error(), "setup command") {
+	if _, err := r.New("feat", "", discardLog); err == nil || !strings.Contains(err.Error(), "setup command") {
 		t.Fatalf("New = %v, want setup failure", err)
 	}
 }
@@ -131,7 +172,7 @@ func TestLs(t *testing.T) {
 	if lines, err := r.Ls(); err != nil || len(lines) != 0 {
 		t.Fatalf("Ls on fresh repo = %v, %v; want empty", lines, err)
 	}
-	path, err := r.New("feat", discardLog)
+	path, err := r.New("feat", "", discardLog)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -180,7 +221,7 @@ func TestRmErrorOnBrokenRepo(t *testing.T) {
 
 func TestRmRefusesDirtyWorktree(t *testing.T) {
 	r := initRepo(t)
-	path, err := r.New("feat", discardLog)
+	path, err := r.New("feat", "", discardLog)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -195,7 +236,7 @@ func TestRmRefusesDirtyWorktree(t *testing.T) {
 
 func TestRmForceRemovesDirtyWorktree(t *testing.T) {
 	r := initRepo(t)
-	path, err := r.New("feat", discardLog)
+	path, err := r.New("feat", "", discardLog)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -212,7 +253,7 @@ func TestRmForceRemovesDirtyWorktree(t *testing.T) {
 
 func TestRmCleanMergedWorktree(t *testing.T) {
 	r := initRepo(t)
-	if _, err := r.New("feat", discardLog); err != nil {
+	if _, err := r.New("feat", "", discardLog); err != nil {
 		t.Fatal(err)
 	}
 	if err := r.Rm("feat", false); err != nil {
@@ -222,7 +263,7 @@ func TestRmCleanMergedWorktree(t *testing.T) {
 
 func TestRmRefusesUnpushedUpstreamCommits(t *testing.T) {
 	r := initRepo(t)
-	path, err := r.New("feat", discardLog)
+	path, err := r.New("feat", "", discardLog)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -239,7 +280,7 @@ func TestRmRefusesUnpushedUpstreamCommits(t *testing.T) {
 
 func TestRmAllowsWhenUpstreamCaughtUp(t *testing.T) {
 	r := initRepo(t)
-	path, err := r.New("feat", discardLog)
+	path, err := r.New("feat", "", discardLog)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -251,7 +292,7 @@ func TestRmAllowsWhenUpstreamCaughtUp(t *testing.T) {
 
 func TestRmRefusesUnmergedWithoutUpstream(t *testing.T) {
 	r := initRepo(t)
-	path, err := r.New("feat", discardLog)
+	path, err := r.New("feat", "", discardLog)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -267,7 +308,7 @@ func TestRmRefusesUnmergedWithoutUpstream(t *testing.T) {
 
 func TestRmErrorWhenStatusFails(t *testing.T) {
 	r := initRepo(t)
-	path, err := r.New("feat", discardLog)
+	path, err := r.New("feat", "", discardLog)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -283,7 +324,7 @@ func TestRmErrorWhenStatusFails(t *testing.T) {
 
 func TestRmErrorWhenWorktreeLocked(t *testing.T) {
 	r := initRepo(t)
-	path, err := r.New("feat", discardLog)
+	path, err := r.New("feat", "", discardLog)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -295,18 +336,18 @@ func TestRmErrorWhenWorktreeLocked(t *testing.T) {
 
 func TestPruneRemovesMergedSkipsDirtyAndDeleted(t *testing.T) {
 	r := initRepo(t)
-	merged, err := r.New("merged", discardLog)
+	merged, err := r.New("merged", "", discardLog)
 	if err != nil {
 		t.Fatal(err)
 	}
-	dirty, err := r.New("dirty", discardLog)
+	dirty, err := r.New("dirty", "", discardLog)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(dirty, "wip.txt"), nil, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	ahead, err := r.New("ahead", discardLog)
+	ahead, err := r.New("ahead", "", discardLog)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -315,7 +356,7 @@ func TestPruneRemovesMergedSkipsDirtyAndDeleted(t *testing.T) {
 	}
 	mustGit(t, ahead, "add", ".")
 	mustGit(t, ahead, "commit", "-m", "work")
-	if _, err := r.New("deleted", discardLog); err != nil {
+	if _, err := r.New("deleted", "", discardLog); err != nil {
 		t.Fatal(err)
 	}
 	mustGit(t, r.MainRoot, "update-ref", "-d", "refs/heads/deleted")
@@ -342,6 +383,30 @@ func TestPruneRemovesMergedSkipsDirtyAndDeleted(t *testing.T) {
 	}
 }
 
+func TestPruneSkipsWorktreeWhoseStatusFails(t *testing.T) {
+	r := initRepo(t)
+	path, err := r.New("vanished", "", discardLog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A manually deleted worktree directory makes the dirty check error out;
+	// prune must skip rather than treat it as clean and removable.
+	if err := os.RemoveAll(path); err != nil {
+		t.Fatal(err)
+	}
+	var lines []string
+	removed, err := r.Prune(grabLog(&lines))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(removed) != 0 {
+		t.Errorf("Prune removed %v, want none", removed)
+	}
+	if joined := strings.Join(lines, "\n"); !strings.Contains(joined, "skipping "+path) {
+		t.Errorf("Prune log should say it skipped %s:\n%s", path, joined)
+	}
+}
+
 func TestPruneErrorOnBrokenRepo(t *testing.T) {
 	r := &Repo{MainRoot: filepath.Join(t.TempDir(), "gone"), Name: "gone", pathTmpl: "{branch}"}
 	if _, err := r.Prune(discardLog); err == nil {
@@ -351,7 +416,7 @@ func TestPruneErrorOnBrokenRepo(t *testing.T) {
 
 func TestPruneErrorWhenRemoveFails(t *testing.T) {
 	r := initRepo(t)
-	path, err := r.New("merged", discardLog)
+	path, err := r.New("merged", "", discardLog)
 	if err != nil {
 		t.Fatal(err)
 	}

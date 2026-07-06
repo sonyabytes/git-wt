@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 
 	"github.com/sonyabytes/git-wt/internal/config"
@@ -19,7 +20,9 @@ import (
 const usage = `usage: git wt <command>
 
 commands:
-  new <branch> [--porcelain]   create + provision a worktree (branch is created if missing)
+  new <branch> [--porcelain] [--from=<ref>]
+                               create + provision a worktree; the branch is created if
+                               missing (from <ref> when --from is given, else from HEAD)
   ls                           list managed worktrees (path<TAB>branch)
   rm <branch> [--force]        remove a worktree; refuses on unsaved/unpushed work
   prune                        remove worktrees whose branches are merged or deleted
@@ -28,7 +31,26 @@ commands:
                                worktree placement (sibling|inside|home|<template>) unless
                                --placement is given or stdin is not a terminal; --hook also
                                installs a Claude Code guard against raw 'git worktree add'
+  version                      print the git-wt version
 `
+
+// version is stamped by goreleaser on release builds (-X main.version);
+// source builds fall back to the module version `go install` records.
+var version = "dev"
+
+// readBuildInfo is a seam over debug.ReadBuildInfo so tests can exercise
+// every version-resolution branch.
+var readBuildInfo = debug.ReadBuildInfo
+
+func versionString() string {
+	if version != "dev" {
+		return version
+	}
+	if bi, ok := readBuildInfo(); ok && bi.Main.Version != "" && bi.Main.Version != "(devel)" {
+		return bi.Main.Version
+	}
+	return version
+}
 
 func main() { // coverage-ignore
 	os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr, stdinIsTTY()))
@@ -50,10 +72,13 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, tty bool) int
 		return 1
 	}
 
-	// Help and unknown commands must work outside a git repository.
+	// Help, version, and unknown commands must work outside a git repository.
 	switch args[0] {
 	case "-h", "--help", "help":
 		fmt.Fprint(stdout, usage)
+		return 0
+	case "version", "--version":
+		fmt.Fprintln(stdout, "git-wt "+versionString())
 		return 0
 	case "new", "ls", "rm", "prune", "init":
 	default:
@@ -76,17 +101,18 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, tty bool) int
 		fs := flag.NewFlagSet("new", flag.ContinueOnError)
 		fs.SetOutput(stderr)
 		porcelain := fs.Bool("porcelain", false, "print only the worktree path on stdout")
+		from := fs.String("from", "", "base ref for a newly created branch (default: HEAD)")
 		if err := fs.Parse(rest(args)); err != nil {
 			return 2
 		}
 		if fs.NArg() != 1 {
-			return fail(fmt.Errorf("usage: git wt new <branch>"))
+			return fail(fmt.Errorf("usage: git wt new <branch> [--from=<ref>]"))
 		}
 		quiet := logf
 		if *porcelain {
 			quiet = func(string, ...any) {}
 		}
-		path, err := repo.New(fs.Arg(0), quiet)
+		path, err := repo.New(fs.Arg(0), *from, quiet)
 		if err != nil {
 			return fail(err)
 		}
@@ -150,13 +176,24 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, tty bool) int
 }
 
 // rest returns the args after the subcommand, flags first — the flag pkg
-// stops at the first positional, and `git wt rm mybranch --force` should work.
+// stops at the first positional, and `git wt rm mybranch --force` should
+// work. Value-taking flags keep their space-separated argument attached so
+// `git wt new mybranch --from origin/main` reorders correctly.
 func rest(args []string) []string {
 	var flags, positional []string
-	for _, a := range args[1:] {
-		if len(a) > 1 && a[0] == '-' {
+	tail := args[1:]
+	for i := 0; i < len(tail); i++ {
+		a := tail[i]
+		switch {
+		case a == "--from" || a == "-from":
 			flags = append(flags, a)
-		} else {
+			if i+1 < len(tail) {
+				i++
+				flags = append(flags, tail[i])
+			}
+		case len(a) > 1 && a[0] == '-':
+			flags = append(flags, a)
+		default:
 			positional = append(positional, a)
 		}
 	}
